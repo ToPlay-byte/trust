@@ -1,0 +1,10 @@
+requests
+Django==6.0.3
+asgiref
+python-dotenv
+psycopg[binary]
+playwright
+openai
+pyotp
+whitenoise
+openpyxl

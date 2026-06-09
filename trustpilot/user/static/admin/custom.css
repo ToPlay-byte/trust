@@ -1,0 +1,57 @@
+.status-badge {
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 12px;
+    white-space: nowrap;
+    display: inline-block;
+}
+
+.status-on-hold { color: #6b7280; background: #f3f4f6; }
+.status-pending { color: #d97706; background: #fef3c7; }
+.status-in-progress { color: #2563eb; background: #dbeafe; }
+.status-success { color: #059669; background: #d1fae5; }
+.status-failed { color: #dc2626; background: #fee2e2; }
+
+.level-info { color: #2563eb; background: #dbeafe; }
+.level-warning { color: #d97706; background: #fef3c7; }
+.level-error { color: #dc2626; background: #fee2e2; }
+.level-debug { color: #6b7280; background: #f3f4f6; }
+
+.status-new { color: #2563eb; background: #dbeafe; }
+.status-warming { color: #d97706; background: #fef3c7; }
+.status-ready { color: #059669; background: #d1fae5; }
+
+/* Custom colors for column labels (headers) */
+.column-target_company a {
+    color: #0284c7 !important; /* Sky blue */
+}
+
+.column-action a {
+    color: #7c3aed !important; /* Violet */
+}
+
+.column-execute_at a {
+    color: #059669 !important; /* Emerald */
+}
+
+.column-colored_status a {
+    color: #edf0f4 !important; /* Gray */
+}
+
+/* Profile autocomplete width — controlled at the widget level via data-width="100%"
+ * (see formfield_for_foreignkey in admin.py). Select2 reads data-width first and
+ * sets style="width: 100%" on the container, so no !important override is needed here.
+ *
+ * The dropdown is appended to <body> by Select2, outside .field-profile, so it is
+ * targeted by the theme class. min-width prevents it collapsing on short selections.
+ */
+.select2-container--admin-autocomplete .select2-dropdown {
+    min-width: 400px;
+}
+
+.select2-results__option {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

@@ -1,0 +1,3 @@
+id,action,status,started_at,finished_at,duration,comment,created_at,updated_at,user_id,company_queries,company_queries_count_from,company_queries_count_to,interactions_count_from,interactions_count_to,limit_on_reviews_duration,pause_multiplier,prompt_parameters,prompts,restricted_company_queries,review_length,target_company
+6,day_7_9,failed,2026-04-28 21:47:47.263345+00,2026-04-28 21:48:18.102359+00,00:00:30.839014,,2026-04-25 10:00:00+00,2026-04-28 21:48:18.102616+00,3,[],3,5,1,3,30,1,,"['"write about alaska'"]",[],50,alibaba
+5,day_1_2,failed,2026-04-27 22:47:06.5392+00,2026-04-27 22:47:07.079691+00,00:00:00.540491,,2026-04-25 10:00:00+00,2026-04-27 22:47:07.079816+00,3,[],3,5,1,3,,1,,[],[],,
