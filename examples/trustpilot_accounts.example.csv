@@ -1,0 +1,3 @@
+trustpilot_account_id,trustpilot_email,profile_name,authorized,notes,proxy_type,proxy_host,proxy_port,proxy_username,proxy_password,start_url
+acc_001,account1@example.com,TP Account 001,true,Authorized account,http,proxyhost.com,8081,username,password,https://www.trustpilot.com/
+acc_002,account2@example.com,TP Account 002,true,Authorized account,,,,,,https://www.trustpilot.com/
