@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import sys
 from pathlib import Path
@@ -5,9 +6,10 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.utils import timezone
 from openpyxl import load_workbook
 
-from user.models import Profile, User
+from user.models import Profile, User, UserTaskManager
 
 
 BASE_DIR = Path(__file__).resolve().parents[3]
@@ -16,13 +18,16 @@ MODULES_DIR = BASE_DIR / "modules"
 if str(MODULES_DIR) not in sys.path:
     sys.path.insert(0, str(MODULES_DIR))
 
+from browser.browser_session import BrowserSession
 from clients.multilogin_client import MultiloginApiError, MultiloginClient
+from services.task_logger import TaskLogger
 
 
 class Command(BaseCommand):
     help = (
         "Create Multilogin browser profiles and save ml_profile_id / ml_folder_id "
-        "into the existing Django Profile model."
+        "into the existing Django Profile model. Optionally run custom Playwright "
+        "logic inside the same command after profile creation."
     )
 
     def add_arguments(self, parser):
@@ -116,6 +121,18 @@ class Command(BaseCommand):
             action="store_true",
             help="Skip Profile rows that already have ml_profile_id.",
         )
+
+        parser.add_argument(
+            "--run-playwright-after-create",
+            action="store_true",
+            help="After creating Multilogin profile, start it and run custom Playwright code.",
+        )
+        parser.add_argument(
+            "--playwright-action",
+            default="profile_created_playwright_hook",
+            help="Action name for temporary UserTaskManager row.",
+        )
+
         parser.add_argument(
             "--dry-run",
             action="store_true",
@@ -141,7 +158,9 @@ class Command(BaseCommand):
             except Exception as exc:
                 failed_count += 1
                 self.stderr.write(
-                    self.style.ERROR(f"Row {index}: unexpected error: {type(exc).__name__}: {exc}")
+                    self.style.ERROR(
+                        f"Row {index}: unexpected error: {type(exc).__name__}: {exc}"
+                    )
                 )
                 continue
 
@@ -163,7 +182,10 @@ class Command(BaseCommand):
 
         if profile:
             user = profile.user
-            account_email = self._first(row, "account_email", "email", "trustpilot_email") or profile.email
+            account_email = (
+                self._first(row, "account_email", "email", "trustpilot_email")
+                or profile.email
+            )
             profile_name = (
                 self._first(row, "profile_name", "name")
                 or options.get("profile_name")
@@ -332,7 +354,213 @@ class Command(BaseCommand):
             )
         )
 
+        if options["run_playwright_after_create"]:
+            self._run_playwright_after_create(
+                profile=profile,
+                row=row,
+                options=options,
+            )
+
         return "created"
+
+    def _run_playwright_after_create(
+        self,
+        *,
+        profile: Profile,
+        row: dict[str, str],
+        options,
+    ) -> None:
+        """
+        Starts the created Multilogin profile and runs custom Playwright code.
+
+        This hook is inside the same command:
+        create_multilogin_browser_profile.py
+
+        After profile creation, run the command with:
+
+            --run-playwright-after-create
+
+        Then write your own parser logic in _custom_playwright_parser().
+        """
+
+        task = UserTaskManager.objects.create(
+            profile=profile,
+            action=options["playwright_action"],
+            task_status=UserTaskManager.Status.IN_PROGRESS,
+            started_at=timezone.now(),
+        )
+
+        try:
+            asyncio.run(
+                self._run_playwright_after_create_async(
+                    profile=profile,
+                    row=row,
+                    task=task,
+                )
+            )
+        except Exception as exc:
+            task.task_status = UserTaskManager.Status.FAILED
+            task.finished_at = timezone.now()
+            task.comment = f"Playwright hook failed: {type(exc).__name__}: {exc}"
+            task.save(
+                update_fields=[
+                    "task_status",
+                    "finished_at",
+                    "comment",
+                    "updated_at",
+                ]
+            )
+
+            raise CommandError(
+                f"Playwright hook failed for Profile ID {profile.id}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+        task.task_status = UserTaskManager.Status.SUCCESS
+        task.finished_at = timezone.now()
+        task.save(update_fields=["task_status", "finished_at", "updated_at"])
+
+    async def _run_playwright_after_create_async(
+        self,
+        *,
+        profile: Profile,
+        row: dict[str, str],
+        task: UserTaskManager,
+    ) -> None:
+        logger = TaskLogger(task)
+
+        browser_session = BrowserSession(
+            task=task,
+            multilogin_client=MultiloginClient(logger),
+            logger=logger,
+        )
+
+        try:
+            page = await browser_session.start()
+
+            await self._custom_playwright_parser(
+                page=page,
+                profile=profile,
+                row=row,
+                task=task,
+                logger=logger,
+            )
+        finally:
+            await browser_session.stop()
+
+    async def _custom_playwright_parser(
+        self,
+        *,
+        page,
+        profile: Profile,
+        row: dict[str, str],
+        task: UserTaskManager,
+        logger: TaskLogger,
+    ) -> None:
+        """
+        ПИШЕШЬ СВОЙ PLAYWRIGHT-КОД ЗДЕСЬ.
+
+        На этом моменте:
+
+        - Multilogin profile уже создан;
+        - profile.ml_profile_id уже сохранен;
+        - profile.ml_folder_id уже сохранен;
+        - браузер Multilogin уже запущен;
+        - Playwright уже подключен к этому браузеру;
+        - page — это готовый Playwright Page.
+
+        Пример:
+
+            await page.goto(
+                "https://www.trustpilot.com/",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+
+            title = await page.title()
+            await logger.info(f"Page title: {title}")
+
+            cards = page.locator(".some-card-selector")
+            count = await cards.count()
+
+            for index in range(count):
+                text = await cards.nth(index).inner_text()
+                await logger.info(text)
+
+        Важно:
+        здесь использовать только async Playwright API.
+        """
+
+        await logger.info(
+            f"Playwright hook is ready for Profile ID {profile.id}. "
+            "Add your custom parser code inside _custom_playwright_parser()."
+        )
+
+
+
+
+        await page.goto(
+            "https://www.microsoft.com/en-us/microsoft-365/outlook/log-in",
+            wait_until="domcontentloaded",
+            timeout=60000,
+        )
+        sign_in = page.locator("#c-shellmenu_custom_outline_signin_bhvr100_right")
+        await sign_in.wait_for(state="visible", timeout=30000)
+        await sign_in.click()
+
+        await page.wait_for_timeout(15000)
+
+        await page.locator('input[name="loginfmt"]').fill("MiloNiland03@outlook.com")
+
+        await page.locator("#idSIButton9").click()
+
+        await page.wait_for_timeout(15000)
+
+        await page.locator("#passwordEntry").fill("SLP9ktvZ1")
+
+        await page.locator('button[type="submit"]').click()
+
+        await page.wait_for_timeout(20000)
+
+        title = await page.title()
+        await logger.info(f"Page title: {title}")
+
+        await page.goto(
+            "https://www.trustpilot.com/",
+            wait_until="domcontentloaded",
+            timeout=60000,
+        )
+
+        await page.wait_for_timeout(15000)
+
+        # Клик по Log in
+        login_link = page.locator('a[data-navigation-login-desktop-link="true"]')
+        await login_link.wait_for(state="visible", timeout=30000)
+        await login_link.click()
+
+
+        await page.wait_for_timeout(15000)
+        # Клик по первому Continue with email
+        continue_email = page.locator('button[data-reveal-email-flow-button="true"]')
+        await continue_email.wait_for(state="visible", timeout=30000)
+        await continue_email.click()
+
+
+        await page.wait_for_timeout(15000)
+        # Ввод email
+        email_lookup_input = page.locator('input#email-lookup[data-email-input="true"]')
+        await email_lookup_input.wait_for(state="visible", timeout=30000)
+        await email_lookup_input.fill("your@email.com")
+
+
+        await page.wait_for_timeout(15000)
+        # Клик по второму Continue with email
+        email_lookup_button = page.locator('button[data-email-lookup-button="true"]')
+        await email_lookup_button.wait_for(state="visible", timeout=30000)
+        await email_lookup_button.click()
+
+
+        await page.wait_for_timeout(15000)
 
     def _get_rows(self, options) -> list[dict[str, str]]:
         csv_path = options.get("csv")
@@ -421,7 +649,13 @@ class Command(BaseCommand):
 
     def _get_existing_profile(self, row: dict[str, str]) -> Profile | None:
         profile_id = self._first(row, "profile_id", "local_profile_id", "id")
-        profile_email = self._first(row, "profile_email", "email", "account_email", "trustpilot_email")
+        profile_email = self._first(
+            row,
+            "profile_email",
+            "email",
+            "account_email",
+            "trustpilot_email",
+        )
 
         if profile_id:
             try:
